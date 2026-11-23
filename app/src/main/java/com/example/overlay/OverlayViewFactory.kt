@@ -322,7 +322,7 @@ class OverlayViewFactory(
             )
         }
 
-        // Scrollable installed apps strip
+        // Scrollable installed apps strip (all installed launcher apps, pinned first)
         val scrollView = ScrollView(context).apply {
             isVerticalScrollBarEnabled = false
         }
@@ -331,17 +331,16 @@ class OverlayViewFactory(
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        val displayApps = apps.take(28)
-        if (displayApps.isEmpty()) {
+        if (apps.isEmpty()) {
             val emptyTv = TextView(context).apply {
-                text = "No apps"
+                text = "Loading…"
                 setTextColor(secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                 setPadding(dp(4f), dp(12f), dp(4f), dp(12f))
             }
             appsColumn.addView(emptyTv)
         } else {
-            displayApps.forEach { app ->
+            apps.forEach { app ->
                 val ringColor = if (app.isPinned) brandAccent else Color.TRANSPARENT
                 appsColumn.addView(
                     createAppIconCell(
@@ -356,11 +355,13 @@ class OverlayViewFactory(
             }
         }
         scrollView.addView(appsColumn)
+        val maxScrollPx = (context.resources.displayMetrics.heightPixels * 0.44f).roundToInt()
+            .coerceIn(dp(180f), dp(340f))
         root.addView(
             scrollView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(300f)
+                maxScrollPx
             )
         )
 

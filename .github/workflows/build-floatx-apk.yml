@@ -39,24 +39,10 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp
           echo "/tmp/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
-      - name: Prepare debug & test release keystores
+      - name: Prepare test release keystore
         shell: bash
         run: |
-          rm -f debug.keystore my-upload-key.jks
-          if [ -f debug.keystore.base64 ]; then
-            tr -d '\r\n ' < debug.keystore.base64 | base64 -d > debug.keystore 2>/dev/null || rm -f debug.keystore
-          fi
-          if [ ! -s debug.keystore ]; then
-            keytool -genkeypair -noprompt \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-          # Ephemeral CI-only test signing keystore for ARM64 Release APK
+          rm -f my-upload-key.jks
           keytool -genkeypair -noprompt \
             -keystore my-upload-key.jks \
             -storepass "floatx-ci-test-pass" \
@@ -65,24 +51,17 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=FloatX Test,O=FloatX,C=US"
 
-      - name: Build Debug & ARM64 Release APKs
+      - name: Build ARM64 Release APK
         shell: bash
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: floatx-ci-test-pass
           KEY_PASSWORD: floatx-ci-test-pass
-        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Upload ARM64 Release APK
         uses: actions/upload-artifact@v4
         with:
           name: FloatX-arm64-v8a-android16-release-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: FloatX-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

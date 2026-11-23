@@ -31,6 +31,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -68,6 +72,12 @@ fun CustomizeScreen(
     onSetThemeMode: (ThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Local 120Hz slider state so live preview updates smoothly while committing to DataStore on drag end
+    var draftHeight by remember(config.handleHeightDp) { mutableFloatStateOf(config.handleHeightDp.toFloat()) }
+    var draftWidth by remember(config.handleWidthDp) { mutableFloatStateOf(config.handleWidthDp.toFloat()) }
+    var draftBias by remember(config.verticalBias) { mutableFloatStateOf(config.verticalBias) }
+    var draftOpacity by remember(config.opacity) { mutableFloatStateOf(config.opacity) }
+
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
@@ -123,19 +133,19 @@ fun CustomizeScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "${config.edge.label} · ${config.handleHeightDp}×${config.handleWidthDp} dp",
+                                text = "${config.edge.label} · ${draftHeight.roundToInt()}×${draftWidth.roundToInt()} dp",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Opacity ${(config.opacity * 100).roundToInt()}% · ${config.accent.label} Accent",
+                                text = "Opacity ${(draftOpacity * 100).roundToInt()}% · ${config.accent.label} Accent",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
                         val align = if (config.edge == SidebarEdge.LEFT) Alignment.TopStart else Alignment.TopEnd
-                        val yDp = ((150f - (config.handleHeightDp * 0.7f)) * config.verticalBias)
+                        val yDp = ((150f - (draftHeight * 0.7f)) * draftBias)
                             .coerceIn(10f, 96f)
                         Box(
                             modifier = Modifier
@@ -145,9 +155,9 @@ fun CustomizeScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .width(config.handleWidthDp.dp)
-                                    .height((config.handleHeightDp * 0.7f).dp)
-                                    .alpha(config.opacity)
+                                    .width(draftWidth.dp)
+                                    .height((draftHeight * 0.7f).dp)
+                                    .alpha(draftOpacity)
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(config.accent.color)
                                     .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
@@ -228,34 +238,38 @@ fun CustomizeScreen(
 
                         LabeledSlider(
                             label = "Handle Length",
-                            valueText = "${config.handleHeightDp} dp",
-                            value = config.handleHeightDp.toFloat(),
+                            valueText = "${draftHeight.roundToInt()} dp",
+                            value = draftHeight,
                             valueRange = 48f..140f,
-                            onValueChange = { onSetHandleHeight(it.roundToInt()) }
+                            onValueChange = { draftHeight = it },
+                            onValueChangeFinished = { onSetHandleHeight(draftHeight.roundToInt()) }
                         )
 
                         LabeledSlider(
                             label = "Handle Thickness",
-                            valueText = "${config.handleWidthDp} dp",
-                            value = config.handleWidthDp.toFloat(),
+                            valueText = "${draftWidth.roundToInt()} dp",
+                            value = draftWidth,
                             valueRange = 4f..10f,
-                            onValueChange = { onSetHandleWidth(it.roundToInt()) }
+                            onValueChange = { draftWidth = it },
+                            onValueChangeFinished = { onSetHandleWidth(draftWidth.roundToInt()) }
                         )
 
                         LabeledSlider(
                             label = "Vertical Position",
-                            valueText = "${(config.verticalBias * 100).roundToInt()}%",
-                            value = config.verticalBias,
+                            valueText = "${(draftBias * 100).roundToInt()}%",
+                            value = draftBias,
                             valueRange = 0.15f..0.85f,
-                            onValueChange = onSetVerticalBias
+                            onValueChange = { draftBias = it },
+                            onValueChangeFinished = { onSetVerticalBias(draftBias) }
                         )
 
                         LabeledSlider(
                             label = "Panel Transparency",
-                            valueText = "${(config.opacity * 100).roundToInt()}%",
-                            value = config.opacity,
+                            valueText = "${(draftOpacity * 100).roundToInt()}%",
+                            value = draftOpacity,
                             valueRange = 0.35f..1.0f,
-                            onValueChange = onSetOpacity
+                            onValueChange = { draftOpacity = it },
+                            onValueChangeFinished = { onSetOpacity(draftOpacity) }
                         )
                     }
                 }
@@ -399,7 +413,8 @@ private fun LabeledSlider(
     valueText: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
-    onValueChange: (Float) -> Unit
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(
@@ -420,6 +435,7 @@ private fun LabeledSlider(
         Slider(
             value = value,
             onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange
         )
     }

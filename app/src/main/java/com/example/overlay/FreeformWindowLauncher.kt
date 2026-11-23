@@ -66,28 +66,30 @@ object FreeformWindowLauncher {
         val launchIntent = pm.getLaunchIntentForPackage(packageName)
             ?: return FreeformLaunchResult.Failed("App cannot be launched directly")
 
-        val density = context.resources.displayMetrics.density
-        val screenW = context.resources.displayMetrics.widthPixels
-        val screenH = context.resources.displayMetrics.heightPixels
+        val metrics = context.resources.displayMetrics
+        val density = metrics.density
+        val screenW = metrics.widthPixels
+        val screenH = metrics.heightPixels
 
-        val left = (xDp * density).roundToInt().coerceIn(16, (screenW - 240).coerceAtLeast(16))
-        val top = (yDp * density).roundToInt().coerceIn(48, (screenH - 300).coerceAtLeast(48))
-        val right = (left + (widthDp * density).roundToInt()).coerceAtMost(screenW - 16)
-        val bottom = (top + (heightDp * density).roundToInt()).coerceAtMost(screenH - 48)
-        val bounds = Rect(left, top, right.coerceAtLeast(left + 200), bottom.coerceAtLeast(top + 220))
+        val minW = (220f * density).roundToInt().coerceAtMost((screenW - 32).coerceAtLeast(180))
+        val minH = (240f * density).roundToInt().coerceAtMost((screenH - 96).coerceAtLeast(180))
+        val desiredW = (widthDp * density).roundToInt().coerceIn(minW, (screenW - 24).coerceAtLeast(minW))
+        val desiredH = (heightDp * density).roundToInt().coerceIn(minH, (screenH - 96).coerceAtLeast(minH))
+
+        val left = (xDp * density).roundToInt().coerceIn(12, (screenW - desiredW - 12).coerceAtLeast(12))
+        val top = (yDp * density).roundToInt().coerceIn(48, (screenH - desiredH - 48).coerceAtLeast(48))
+        val bounds = Rect(left, top, left + desiredW, top + desiredH)
 
         launchIntent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
                 Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
         )
 
-        // Attempt Android Freeform + HyperOS 3 freeform launch via ActivityOptions
         val freeformSucceeded = runCatching {
             val options = ActivityOptions.makeBasic()
             options.launchBounds = bounds
 
-            // Set WINDOWING_MODE_FREEFORM via hidden ActivityOptions setter when permitted
+            // Request WINDOWING_MODE_FREEFORM via ActivityOptions reflection when available
             runCatching {
                 val method = ActivityOptions::class.java.getMethod(
                     "setLaunchWindowingMode",
@@ -96,8 +98,17 @@ object FreeformWindowLauncher {
                 method.invoke(options, WINDOWING_MODE_FREEFORM)
             }
 
-            // Android 14/15/16 background activity start allowance where applicable
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Allow background activity start from overlay service on Android 14–16+
+            if (Build.VERSION.SDK_INT >= 36) {
+                runCatching {
+                    val modeField = ActivityOptions::class.java.getField(
+                        "MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS"
+                    )
+                    val mode = modeField.getInt(null)
+                    options.setPendingIntentBackgroundActivityStartMode(mode)
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                @Suppress("DEPRECATION")
                 runCatching {
                     options.setPendingIntentBackgroundActivityStartMode(
                         ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
@@ -106,7 +117,6 @@ object FreeformWindowLauncher {
             }
 
             val bundle = options.toBundle()
-            // Standard & HyperOS/MIUI freeform windowing extras
             bundle.putInt("android.activity.windowingMode", WINDOWING_MODE_FREEFORM)
             bundle.putParcelable("android:activity.launchBounds", bounds)
 

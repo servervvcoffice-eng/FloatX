@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -132,13 +133,27 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
     init {
         refreshInstalledApps()
         startRamMonitor()
+        restoreServiceIfEnabled()
+    }
+
+    private fun restoreServiceIfEnabled() {
+        viewModelScope.launch {
+            val config = prefsRepo.configFlow.first()
+            if (config.enabled && checkOverlayPermission() && !FloatXWindowRegistry.serviceRunning.value) {
+                FloatXOverlayService.start(appContext)
+            }
+        }
     }
 
     fun refreshPermissions() {
         val granted = checkOverlayPermission()
         _hasOverlayPermission.value = granted
-        if (granted && uiState.value.config.enabled && !FloatXWindowRegistry.serviceRunning.value) {
-            FloatXOverlayService.start(appContext)
+        if (!granted) return
+        viewModelScope.launch {
+            val config = prefsRepo.configFlow.first()
+            if (config.enabled && !FloatXWindowRegistry.serviceRunning.value) {
+                FloatXOverlayService.start(appContext)
+            }
         }
     }
 
@@ -169,6 +184,7 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         viewModelScope.launch {
+            // Persist preference FIRST before starting/stopping service to prevent DataStore race
             prefsRepo.setSidebarEnabled(enable)
             if (enable) {
                 FloatXOverlayService.start(appContext)
@@ -184,8 +200,12 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
         if (FloatXWindowRegistry.serviceRunning.value) {
             FloatXWindowRegistry.toggleSidebarExpanded()
         } else if (checkOverlayPermission()) {
-            toggleSidebarService(true)
-            FloatXWindowRegistry.setSidebarExpanded(true)
+            viewModelScope.launch {
+                prefsRepo.setSidebarEnabled(true)
+                FloatXOverlayService.start(appContext)
+                delay(180)
+                FloatXWindowRegistry.setSidebarExpanded(true)
+            }
         } else {
             FloatXWindowRegistry.toggleSidebarExpanded()
         }
@@ -199,15 +219,17 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
         val hasOverlay = checkOverlayPermission()
 
         if (hasOverlay && !FloatXWindowRegistry.serviceRunning.value) {
-            viewModelScope.launch { prefsRepo.setSidebarEnabled(true) }
-            FloatXOverlayService.start(appContext)
+            viewModelScope.launch {
+                prefsRepo.setSidebarEnabled(true)
+                FloatXOverlayService.start(appContext)
+            }
         }
 
         val session = FloatXWindowRegistry.openOrFocusWindow(
             app = app,
             preset = config.defaultPreset,
             accentArgb = config.accent.argb,
-            freeformLaunched = false
+            freeformLaunched = alsoOpenSystemFreeform
         )
 
         if (alsoOpenSystemFreeform) {
@@ -221,13 +243,7 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
             )
             when (result) {
                 is FreeformLaunchResult.FreeformSuccess -> {
-                    FloatXWindowRegistry.openOrFocusWindow(
-                        app = app,
-                        preset = config.defaultPreset,
-                        accentArgb = config.accent.argb,
-                        freeformLaunched = true
-                    )
-                    FloatXWindowRegistry.postStatus("${app.label} launched in Floating Freeform window")
+                    FloatXWindowRegistry.postStatus("${app.label} launched in Floating Window")
                 }
 
                 is FreeformLaunchResult.StandardFallback -> {
@@ -235,7 +251,7 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 is FreeformLaunchResult.Failed -> {
-                    FloatXWindowRegistry.postStatus("Floating frame created for ${app.label}")
+                    FloatXWindowRegistry.postStatus(result.reason)
                 }
             }
         } else {

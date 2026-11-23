@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import android.util.LruCache
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -76,7 +78,17 @@ import com.example.data.SidebarEdge
 import com.example.ui.theme.WindowCloseRed
 import com.example.ui.theme.WindowFreeformGreen
 import com.example.ui.theme.WindowMinimizeAmber
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+
+private object ComposeIconCache {
+    private val cache = LruCache<String, ImageBitmap>(120)
+    fun get(pkg: String): ImageBitmap? = cache.get(pkg)
+    fun put(pkg: String, bmp: ImageBitmap) {
+        cache.put(pkg, bmp)
+    }
+}
 
 @Composable
 fun FrostedCard(
@@ -105,12 +117,23 @@ fun AppIconImage(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 12.dp
 ) {
-    val imageBitmap = remember(packageName) {
-        getBitmap(packageName)?.asImageBitmap()
+    val cached = ComposeIconCache.get(packageName)
+    val imageBitmap by produceState(initialValue = cached, key1 = packageName) {
+        if (value == null) {
+            val loaded = withContext(Dispatchers.IO) {
+                getBitmap(packageName)?.asImageBitmap()
+            }
+            if (loaded != null) {
+                ComposeIconCache.put(packageName, loaded)
+                value = loaded
+            }
+        }
     }
-    if (imageBitmap != null) {
+
+    val currentBitmap = imageBitmap
+    if (currentBitmap != null) {
         Image(
-            bitmap = imageBitmap,
+            bitmap = currentBitmap,
             contentDescription = contentDescription,
             modifier = modifier.clip(RoundedCornerShape(cornerRadius)),
             contentScale = ContentScale.Crop
@@ -320,21 +343,17 @@ fun InteractiveFloatingStage(
             val sorted = remember(activeWindows) { activeWindows.sortedBy { it.zOrder } }
             sorted.forEachIndexed { index, session ->
                 key(session.id) {
-                    val scaleFactor = 0.58f
+                    val scaleFactor = 0.54f
                     val previewW = (session.widthDp * scaleFactor).coerceIn(138f, (stageWidthDp.value - 24f).coerceAtLeast(138f))
-                    val previewH = (session.heightDp * scaleFactor).coerceIn(124f, (stageHeightDp.value - 36f).coerceAtLeast(124f))
+                    val previewH = (session.heightDp * scaleFactor).coerceIn(124f, (stageHeightDp.value - 48f).coerceAtLeast(124f))
+                    val maxStageX = (stageWidthDp.value - previewW - 10f).coerceAtLeast(10f)
+                    val maxStageY = (stageHeightDp.value - previewH - 10f).coerceAtLeast(42f)
 
-                    var localX by remember(session.id, session.xDp) {
-                        mutableFloatStateOf(
-                            ((session.xDp * 0.6f) % (stageWidthDp.value - previewW).coerceAtLeast(12f))
-                                .coerceIn(10f, (stageWidthDp.value - previewW - 10f).coerceAtLeast(10f))
-                        )
+                    var localX by remember(session.id) {
+                        mutableFloatStateOf((session.xDp * 0.55f).coerceIn(10f, maxStageX))
                     }
-                    var localY by remember(session.id, session.yDp) {
-                        mutableFloatStateOf(
-                            ((session.yDp * 0.55f) % (stageHeightDp.value - previewH).coerceAtLeast(18f))
-                                .coerceIn(42f, (stageHeightDp.value - previewH - 12f).coerceAtLeast(42f))
-                        )
+                    var localY by remember(session.id) {
+                        mutableFloatStateOf((session.yDp * 0.55f).coerceIn(42f, maxStageY))
                     }
 
                     if (session.isMinimized) {

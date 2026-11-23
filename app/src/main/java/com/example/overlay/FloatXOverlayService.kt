@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -62,7 +63,7 @@ class FloatXOverlayService : Service() {
             val intent = Intent(context, FloatXOverlayService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            runCatching { context.startService(intent) }
         }
     }
 
@@ -74,9 +75,12 @@ class FloatXOverlayService : Service() {
     private lateinit var viewFactory: OverlayViewFactory
 
     private var currentConfig: SidebarConfig = SidebarConfig(enabled = true)
+    private var lastLoadedPinnedSet: Set<String>? = null
     private var installedApps: List<InstalledAppInfo> = emptyList()
+    private var seenEnabledTrue = false
 
     private var edgeHandleView: View? = null
+    private var edgeHandleParams: WindowManager.LayoutParams? = null
     private var sidebarScrimView: View? = null
     private var sidebarPanelView: View? = null
 
@@ -89,7 +93,8 @@ class FloatXOverlayService : Service() {
         val view: View,
         val params: WindowManager.LayoutParams,
         val mode: OverlayMode,
-        val zOrder: Long
+        val zOrder: Long,
+        val accentArgb: Int
     )
 
     private val attachedWindows = LinkedHashMap<String, AttachedWindowHolder>()
@@ -118,6 +123,7 @@ class FloatXOverlayService : Service() {
 
         when (intent?.action) {
             ACTION_STOP -> {
+                FloatXWindowRegistry.setSidebarExpanded(false)
                 FloatXWindowRegistry.closeAll()
                 serviceScope.launch { prefsRepository.setSidebarEnabled(false) }
                 stopSelf()
@@ -133,6 +139,8 @@ class FloatXOverlayService : Service() {
             }
 
             else -> {
+                // Ensure preference stays synced to true on explicit start to avoid stale-false race
+                serviceScope.launch { prefsRepository.setSidebarEnabled(true) }
                 if (edgeHandleView == null) {
                     attachOrUpdateEdgeHandle()
                 }
@@ -140,6 +148,21 @@ class FloatXOverlayService : Service() {
         }
 
         return START_STICKY
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Re-clamp & re-theme overlays cleanly on rotation or Light/Dark mode change
+        if (edgeHandleView != null) {
+            attachOrUpdateEdgeHandle()
+        }
+        if (FloatXWindowRegistry.sidebarExpanded.value) {
+            showSidebarPanel()
+        }
+        // Rebuild bubbles/editor with updated screen dimensions and theme
+        attachedWindows.values.forEach { removeViewSafe(it.view) }
+        attachedWindows.clear()
+        syncWindowOverlays(FloatXWindowRegistry.windows.value)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -152,12 +175,14 @@ class FloatXOverlayService : Service() {
     override fun onDestroy() {
         removeViewSafe(edgeHandleView)
         edgeHandleView = null
+        edgeHandleParams = null
         removeViewSafe(sidebarScrimView)
         sidebarScrimView = null
         removeViewSafe(sidebarPanelView)
         sidebarPanelView = null
         attachedWindows.values.forEach { removeViewSafe(it.view) }
         attachedWindows.clear()
+        FloatXWindowRegistry.setSidebarExpanded(false)
         FloatXWindowRegistry.setServiceRunning(false)
         serviceScope.cancel()
         super.onDestroy()
@@ -252,14 +277,54 @@ class FloatXOverlayService : Service() {
     private fun observePreferences() {
         serviceScope.launch {
             prefsRepository.configFlow.collectLatest { config ->
-                currentConfig = config
-                installedApps = appsRepository.loadInstalledApps(config.pinnedPackages)
-                if (!config.enabled) {
+                if (config.enabled) {
+                    seenEnabledTrue = true
+                } else if (seenEnabledTrue) {
+                    // Only stop when user actually transitioned enabled from true -> false
                     stopSelf()
                     return@collectLatest
                 }
-                attachOrUpdateEdgeHandle()
+
+                val prev = currentConfig
+                currentConfig = config
+
+                // Avoid re-querying PackageManager on slider drags — only reload if pinned apps changed or list empty
+                if (installedApps.isEmpty() || lastLoadedPinnedSet != config.pinnedPackages) {
+                    lastLoadedPinnedSet = config.pinnedPackages
+                    installedApps = appsRepository.loadInstalledApps(config.pinnedPackages)
+                }
+
+                val onlyVerticalChanged = edgeHandleView != null &&
+                    edgeHandleParams != null &&
+                    prev.edge == config.edge &&
+                    prev.handleHeightDp == config.handleHeightDp &&
+                    prev.handleWidthDp == config.handleWidthDp &&
+                    prev.opacity == config.opacity &&
+                    prev.autoHide == config.autoHide &&
+                    prev.accent == config.accent &&
+                    prev.themeMode == config.themeMode
+
+                if (onlyVerticalChanged) {
+                    val params = edgeHandleParams!!
+                    val screenH = resources.displayMetrics.heightPixels
+                    params.y = (screenH * config.verticalBias).roundToInt()
+                        .coerceIn(dpToPx(64f), (screenH - dpToPx(140f)).coerceAtLeast(dpToPx(64f)))
+                    updateViewLayoutSafe(edgeHandleView, params)
+                } else {
+                    attachOrUpdateEdgeHandle()
+                }
+
+                // Rebuild bubbles cleanly if theme, edge, or showFloatingBubbles changed
+                if (prev.themeMode != config.themeMode ||
+                    prev.edge != config.edge ||
+                    prev.showFloatingBubbles != config.showFloatingBubbles ||
+                    prev.accent != config.accent
+                ) {
+                    attachedWindows.values.forEach { removeViewSafe(it.view) }
+                    attachedWindows.clear()
+                }
                 syncWindowOverlays(FloatXWindowRegistry.windows.value)
+
                 if (FloatXWindowRegistry.sidebarExpanded.value) {
                     showSidebarPanel()
                 }
@@ -271,6 +336,9 @@ class FloatXOverlayService : Service() {
         serviceScope.launch {
             FloatXWindowRegistry.sidebarExpanded.collectLatest { expanded ->
                 if (expanded) {
+                    if (installedApps.isEmpty()) {
+                        installedApps = appsRepository.loadInstalledApps(currentConfig.pinnedPackages)
+                    }
                     showSidebarPanel()
                 } else {
                     hideSidebarPanel()
@@ -309,6 +377,7 @@ class FloatXOverlayService : Service() {
     private fun attachOrUpdateEdgeHandle() {
         removeViewSafe(edgeHandleView)
         edgeHandleView = null
+        edgeHandleParams = null
 
         val screenH = resources.displayMetrics.heightPixels
         val yPos = (screenH * currentConfig.verticalBias).roundToInt()
@@ -341,17 +410,20 @@ class FloatXOverlayService : Service() {
             }
         )
 
+        edgeHandleParams = params
         edgeHandleView = handleView
         addViewSafe(handleView, params)
     }
 
     private fun showSidebarPanel() {
+        // Cancel any running animations & remove old panel/scrim cleanly
+        sidebarPanelView?.animate()?.cancel()
         removeViewSafe(sidebarPanelView)
         sidebarPanelView = null
         removeViewSafe(sidebarScrimView)
         sidebarScrimView = null
 
-        // Attach transparent full-screen backdrop first so tapping anywhere outside auto-collapses the sidebar
+        // Transparent full-screen backdrop so tapping anywhere outside immediately collapses the sidebar
         val scrimParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -361,15 +433,19 @@ class FloatXOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
         val scrim = viewFactory.createBackdropScrimView {
+            // Immediately remove scrim to prevent blocking subsequent touches while collapsing
+            removeViewSafe(sidebarScrimView)
+            sidebarScrimView = null
             FloatXWindowRegistry.setSidebarExpanded(false)
         }
         sidebarScrimView = scrim
         addViewSafe(scrim, scrimParams)
 
         val screenH = resources.displayMetrics.heightPixels
-        val panelWidth = dpToPx(82f)
-        val yPos = (screenH * currentConfig.verticalBias - dpToPx(170f)).roundToInt()
-            .coerceIn(dpToPx(44f), (screenH - dpToPx(420f)).coerceAtLeast(dpToPx(44f)))
+        val panelWidth = dpToPx(84f)
+        val panelEstHeight = dpToPx(380f).coerceAtMost((screenH - dpToPx(96f)).coerceAtLeast(dpToPx(240f)))
+        val yPos = (screenH * currentConfig.verticalBias - panelEstHeight / 2f).roundToInt()
+            .coerceIn(dpToPx(40f), (screenH - panelEstHeight - dpToPx(40f)).coerceAtLeast(dpToPx(40f)))
 
         val params = WindowManager.LayoutParams(
             panelWidth,
@@ -435,7 +511,7 @@ class FloatXOverlayService : Service() {
         panel.scaleY = 0.94f
         sidebarPanelView = panel
         addViewSafe(panel, params)
-        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170).start()
+        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
     }
 
     private fun hideSidebarPanel() {
@@ -444,20 +520,17 @@ class FloatXOverlayService : Service() {
 
         val current = sidebarPanelView ?: return
         sidebarPanelView = null
+        current.animate().cancel()
         current.animate()
             .alpha(0f)
             .scaleX(0.9f)
             .scaleY(0.94f)
-            .setDuration(120)
+            .setDuration(110)
             .withEndAction { removeViewSafe(current) }
             .start()
     }
 
     private fun syncWindowOverlays(sessions: List<FloatingWindowSession>) {
-        // Only render overlays when:
-        // 1) User explicitly opened the Bounds Resizer Editor (showBoundsEditor == true), OR
-        // 2) Floating Bubbles are enabled (or window is minimized), showing a compact 48dp edge orb.
-        // Never spawn giant blocking placeholder cards on top of real Freeform apps!
         val visibleSessions = sessions.filter { session ->
             session.showBoundsEditor || session.isMinimized || currentConfig.showFloatingBubbles
         }
@@ -482,7 +555,9 @@ class FloatXOverlayService : Service() {
             }
 
             val existing = attachedWindows[session.id]
-            val needsRebuild = existing == null || existing.mode != targetMode
+            val needsRebuild = existing == null ||
+                existing.mode != targetMode ||
+                existing.accentArgb != currentConfig.accent.argb
 
             if (needsRebuild) {
                 existing?.let { removeViewSafe(it.view) }
@@ -490,30 +565,28 @@ class FloatXOverlayService : Service() {
                 if (holder != null) {
                     attachedWindows[session.id] = holder
                 }
-            } else {
+            } else if (existing != null && targetMode == OverlayMode.BOUNDS_EDITOR) {
                 val params = existing.params
-                if (targetMode == OverlayMode.BOUNDS_EDITOR) {
-                    val targetX = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(120f)).coerceAtLeast(0))
-                    val targetY = dpToPx(session.yDp).coerceIn(dpToPx(24f), (screenH - dpToPx(120f)).coerceAtLeast(dpToPx(24f)))
-                    val targetW = dpToPx(session.widthDp).coerceIn(dpToPx(236f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(236f)))
-                    val targetH = dpToPx(session.heightDp).coerceIn(dpToPx(230f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(230f)))
+                val targetX = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(120f)).coerceAtLeast(0))
+                val targetY = dpToPx(session.yDp).coerceIn(dpToPx(24f), (screenH - dpToPx(120f)).coerceAtLeast(dpToPx(24f)))
+                val targetW = dpToPx(session.widthDp).coerceIn(dpToPx(236f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(236f)))
+                val targetH = dpToPx(session.heightDp).coerceIn(dpToPx(230f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(230f)))
 
-                    var changed = false
-                    if (params.x != targetX) { params.x = targetX; changed = true }
-                    if (params.y != targetY) { params.y = targetY; changed = true }
-                    if (params.width != targetW) { params.width = targetW; changed = true }
-                    if (params.height != targetH) { params.height = targetH; changed = true }
+                var changed = false
+                if (params.x != targetX) { params.x = targetX; changed = true }
+                if (params.y != targetY) { params.y = targetY; changed = true }
+                if (params.width != targetW) { params.width = targetW; changed = true }
+                if (params.height != targetH) { params.height = targetH; changed = true }
 
-                    existing.view.findViewWithTag<TextView>("dimensions_label")?.text =
-                        "${session.widthDp.roundToInt()} × ${session.heightDp.roundToInt()} dp · Drag corner to resize"
+                existing.view.findViewWithTag<TextView>("dimensions_label")?.text =
+                    "${session.widthDp.roundToInt()} × ${session.heightDp.roundToInt()} dp · Drag corner to resize"
 
-                    if (existing.zOrder != session.zOrder) {
-                        removeViewSafe(existing.view)
-                        addViewSafe(existing.view, params)
-                        attachedWindows[session.id] = existing.copy(zOrder = session.zOrder)
-                    } else if (changed) {
-                        updateViewLayoutSafe(existing.view, params)
-                    }
+                if (existing.zOrder != session.zOrder) {
+                    removeViewSafe(existing.view)
+                    addViewSafe(existing.view, params)
+                    attachedWindows[session.id] = existing.copy(zOrder = session.zOrder)
+                } else if (changed) {
+                    updateViewLayoutSafe(existing.view, params)
                 }
             }
         }
@@ -528,7 +601,6 @@ class FloatXOverlayService : Service() {
     ): AttachedWindowHolder? {
         return if (mode == OverlayMode.BUBBLE) {
             val bubbleSize = dpToPx(48f)
-            // Dock bubbles cleanly on the opposite edge from the sidebar handle so they never overlap
             val dockOnLeft = currentConfig.edge == SidebarEdge.RIGHT
             val defaultX = if (dockOnLeft) dpToPx(8f) else (screenW - bubbleSize - dpToPx(8f)).coerceAtLeast(0)
             val defaultY = (dpToPx(110f) + bubbleIndex * dpToPx(58f))
@@ -548,17 +620,18 @@ class FloatXOverlayService : Service() {
             }
 
             val view = viewFactory.createFloatingBubbleView(
-                session = session,
+                session = session.copy(accentArgb = currentConfig.accent.argb),
                 config = currentConfig,
                 onTapLaunchFreeform = {
-                    FloatXWindowRegistry.setMinimized(session.id, false)
+                    val latest = FloatXWindowRegistry.windows.value.firstOrNull { it.id == session.id } ?: session
+                    FloatXWindowRegistry.setMinimized(latest.id, false)
                     FreeformWindowLauncher.launchInFreeformWindow(
                         context = this,
-                        packageName = session.packageName,
-                        xDp = session.xDp,
-                        yDp = session.yDp,
-                        widthDp = session.widthDp,
-                        heightDp = session.heightDp
+                        packageName = latest.packageName,
+                        xDp = latest.xDp,
+                        yDp = latest.yDp,
+                        widthDp = latest.widthDp,
+                        heightDp = latest.heightDp
                     )
                 },
                 onLongPressResize = {
@@ -580,8 +653,8 @@ class FloatXOverlayService : Service() {
             view.scaleY = 0.7f
             view.alpha = 0f
             addViewSafe(view, params)
-            view.animate().scaleX(1f).scaleY(1f).alpha(0.95f).setDuration(160).start()
-            AttachedWindowHolder(view, params, OverlayMode.BUBBLE, session.zOrder)
+            view.animate().scaleX(1f).scaleY(1f).alpha(0.95f).setDuration(150).start()
+            AttachedWindowHolder(view, params, OverlayMode.BUBBLE, session.zOrder, currentConfig.accent.argb)
         } else {
             val xPx = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(120f)).coerceAtLeast(0))
             val yPx = dpToPx(session.yDp).coerceIn(dpToPx(28f), (screenH - dpToPx(140f)).coerceAtLeast(dpToPx(28f)))
@@ -602,7 +675,7 @@ class FloatXOverlayService : Service() {
             }
 
             val view = viewFactory.createBoundsResizerView(
-                session = session,
+                session = session.copy(accentArgb = currentConfig.accent.argb),
                 config = currentConfig,
                 onFocus = { FloatXWindowRegistry.focusWindow(session.id) },
                 onDragDelta = { dx, dy ->
@@ -626,7 +699,6 @@ class FloatXOverlayService : Service() {
                     FloatXWindowRegistry.closeWindow(session.id)
                 },
                 onApplyAndLaunchFreeform = {
-                    // Auto-hide the bounds editor frame so the real app opens unobstructed!
                     FloatXWindowRegistry.setBoundsEditorVisible(session.id, false)
                     FreeformWindowLauncher.launchInFreeformWindow(
                         context = this,
@@ -646,8 +718,8 @@ class FloatXOverlayService : Service() {
             view.scaleY = 0.92f
             view.alpha = 0f
             addViewSafe(view, params)
-            view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180).start()
-            AttachedWindowHolder(view, params, OverlayMode.BOUNDS_EDITOR, session.zOrder)
+            view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(170).start()
+            AttachedWindowHolder(view, params, OverlayMode.BOUNDS_EDITOR, session.zOrder, currentConfig.accent.argb)
         }
     }
 

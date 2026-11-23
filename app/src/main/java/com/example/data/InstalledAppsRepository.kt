@@ -17,8 +17,8 @@ class InstalledAppsRepository(context: Context) {
     private val appContext = context.applicationContext
     private val packageManager: PackageManager = appContext.packageManager
 
-    // Memory-bounded LRU icon cache (~3 MB max) for low RAM footprint
-    private val iconCache = object : LruCache<String, Bitmap>(3 * 1024) {
+    // Memory-bounded LRU icon cache (~4 MB max) for low RAM footprint
+    private val iconCache = object : LruCache<String, Bitmap>(4 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int {
             return (value.byteCount / 1024).coerceAtLeast(1)
         }
@@ -49,19 +49,22 @@ class InstalledAppsRepository(context: Context) {
                 val pkg = activityInfo.packageName ?: continue
                 if (pkg == ownPackage || !seen.add(pkg)) continue
 
-                val label = runCatching { info.loadLabel(packageManager)?.toString() }
+                val label = runCatching { info.loadLabel(packageManager).toString() }
                     .getOrNull()
                     ?.takeIf { it.isNotBlank() }
                     ?: pkg
 
-                val isSystem = (activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val flags = activityInfo.applicationInfo.flags
+                // Treat preinstalled apps updated via Play Store (e.g. Chrome, YouTube, Notes) as user-relevant
+                val isPureSystem = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+                    (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
 
                 result.add(
                     InstalledAppInfo(
                         packageName = pkg,
                         label = label,
                         activityName = activityInfo.name,
-                        isSystemApp = isSystem,
+                        isSystemApp = isPureSystem,
                         isPinned = pkg in pinnedPackages
                     )
                 )
@@ -73,6 +76,8 @@ class InstalledAppsRepository(context: Context) {
             )
         }
 
+    fun getCachedIconBitmap(packageName: String): Bitmap? = iconCache.get(packageName)
+
     fun getAppIconBitmap(packageName: String, sizePx: Int = 96): Bitmap? {
         iconCache.get(packageName)?.let { return it }
         val drawable = runCatching { packageManager.getApplicationIcon(packageName) }.getOrNull()
@@ -82,8 +87,11 @@ class InstalledAppsRepository(context: Context) {
         return bitmap
     }
 
-    fun getAppIconDrawable(packageName: String): Drawable? {
-        return runCatching { packageManager.getApplicationIcon(packageName) }.getOrNull()
+    suspend fun loadAppIconBitmapAsync(packageName: String, sizePx: Int = 96): Bitmap? {
+        iconCache.get(packageName)?.let { return it }
+        return withContext(Dispatchers.IO) {
+            getAppIconBitmap(packageName, sizePx)
+        }
     }
 
     fun clearLowMemoryCache() {
