@@ -1,0 +1,6 @@
+{
+  "name": "FloatX",
+  "description": "Custom Floating Window Manager & Edge Sidebar designed for Android 16 and HyperOS 3 with multi-window drag, resize, minimize, and minimal iOS-inspired UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
