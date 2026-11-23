@@ -233,9 +233,9 @@ fun FloatXApp(
                                     onMinimizeAll = viewModel::minimizeAllWindows,
                                     onCloseAll = viewModel::closeAllWindows,
                                     onLaunchFreeform = viewModel::relaunchSessionInFreeform,
+                                    onToggleBoundsEditor = viewModel::setBoundsEditorVisible,
                                     onToggleMinimize = viewModel::setWindowMinimized,
                                     onApplyPreset = viewModel::applyWindowPreset,
-                                    onChangeOpacity = viewModel::setWindowOpacity,
                                     onCloseWindow = viewModel::closeWindow
                                 )
 
@@ -250,6 +250,7 @@ fun FloatXApp(
                                     onSetOpacity = viewModel::setOpacity,
                                     onSetAutoHide = viewModel::setAutoHide,
                                     onSetBlurEffect = viewModel::setBlurEffect,
+                                    onSetShowFloatingBubbles = viewModel::setShowFloatingBubbles,
                                     onSetAccent = viewModel::setAccent,
                                     onSetDefaultPreset = viewModel::setDefaultPreset,
                                     onSetThemeMode = viewModel::setThemeMode

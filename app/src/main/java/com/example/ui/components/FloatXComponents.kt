@@ -33,10 +33,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -517,7 +517,7 @@ fun InteractiveFloatingStage(
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.Rounded.OpenInNew,
+                                                    imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
                                                     contentDescription = "Launch Freeform",
                                                     tint = MaterialTheme.colorScheme.onPrimary,
                                                     modifier = Modifier.size(11.dp)
@@ -584,26 +584,37 @@ fun InteractiveFloatingStage(
                         .width(config.handleWidthDp.dp)
                         .height((config.handleHeightDp * 0.85f).dp)
                         .alpha(config.opacity)
-                        .clip(RoundedCornerShape(99.dp))
+                        .clip(RoundedCornerShape(4.dp))
                         .background(config.accent.color)
-                        .border(1.dp, Color.White.copy(alpha = 0.55f), RoundedCornerShape(99.dp))
-                        .shadow(4.dp, RoundedCornerShape(99.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+                        .shadow(4.dp, RoundedCornerShape(4.dp))
+                )
+            }
+
+            // Outside-tap collapse scrim inside preview stage when sidebar is open
+            if (isSidebarExpanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(55f)
+                        .background(Color.Black.copy(alpha = 0.08f))
+                        .clickable { onToggleSidebar() }
                 )
             }
 
             // Expandable Mini Floating Sidebar Preview Drawer inside Stage
             AnimatedVisibility(
                 visible = isSidebarExpanded,
-                enter = fadeIn() + scaleIn(initialScale = 0.88f),
-                exit = fadeOut() + scaleOut(targetScale = 0.9f),
+                enter = fadeIn() + scaleIn(initialScale = 0.9f),
+                exit = fadeOut() + scaleOut(targetScale = 0.92f),
                 modifier = Modifier
                     .align(if (config.edge == SidebarEdge.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
-                    .padding(horizontal = 14.dp, vertical = 16.dp)
+                    .padding(horizontal = 12.dp, vertical = 16.dp)
                     .zIndex(60f)
             ) {
                 Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = config.opacity.coerceIn(0.75f, 0.96f)),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = config.opacity.coerceIn(0.84f, 0.96f)),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
                     shadowElevation = 10.dp,
                     modifier = Modifier

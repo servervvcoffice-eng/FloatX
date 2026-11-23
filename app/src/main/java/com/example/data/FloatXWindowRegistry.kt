@@ -134,10 +134,27 @@ object FloatXWindowRegistry {
                 if (it.id == windowId) {
                     it.copy(
                         isMinimized = minimized,
+                        showBoundsEditor = if (minimized) false else it.showBoundsEditor,
                         zOrder = if (!minimized) System.nanoTime() else it.zOrder
                     )
                 } else {
                     it
+                }
+            }
+        }
+    }
+
+    fun setBoundsEditorVisible(windowId: String, visible: Boolean) {
+        _windows.update { list ->
+            list.map {
+                if (it.id == windowId) {
+                    it.copy(
+                        showBoundsEditor = visible,
+                        isMinimized = if (visible) false else it.isMinimized,
+                        zOrder = if (visible) System.nanoTime() else it.zOrder
+                    )
+                } else {
+                    if (visible) it.copy(showBoundsEditor = false) else it
                 }
             }
         }
@@ -148,7 +165,7 @@ object FloatXWindowRegistry {
     }
 
     fun minimizeAll() {
-        _windows.update { list -> list.map { it.copy(isMinimized = true) } }
+        _windows.update { list -> list.map { it.copy(isMinimized = true, showBoundsEditor = false) } }
     }
 
     fun cascadeAll() {
@@ -157,6 +174,7 @@ object FloatXWindowRegistry {
                 val step = index % 4
                 session.copy(
                     isMinimized = false,
+                    showBoundsEditor = false,
                     xDp = 18f + step * 22f,
                     yDp = 64f + step * 34f,
                     zOrder = System.nanoTime() + index

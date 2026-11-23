@@ -34,6 +34,7 @@ val WindowMinimizeAmber = Color(0xFFFF9F0A)
 val WindowFreeformGreen = Color(0xFF30D158)
 
 // Sidebar Swatch Accents
+val AccentGray = Color(0xFF8E8E93)
 val AccentCobalt = Color(0xFF007AFF)
 val AccentIceWhite = Color(0xFFE2E8F0)
 val AccentEmerald = Color(0xFF30D158)

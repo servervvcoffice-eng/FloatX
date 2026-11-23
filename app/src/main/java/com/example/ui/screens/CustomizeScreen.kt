@@ -62,6 +62,7 @@ fun CustomizeScreen(
     onSetOpacity: (Float) -> Unit,
     onSetAutoHide: (Boolean) -> Unit,
     onSetBlurEffect: (Boolean) -> Unit,
+    onSetShowFloatingBubbles: (Boolean) -> Unit,
     onSetAccent: (SidebarAccent) -> Unit,
     onSetDefaultPreset: (WindowSizePreset) -> Unit,
     onSetThemeMode: (ThemeMode) -> Unit,
@@ -147,9 +148,9 @@ fun CustomizeScreen(
                                     .width(config.handleWidthDp.dp)
                                     .height((config.handleHeightDp * 0.7f).dp)
                                     .alpha(config.opacity)
-                                    .clip(RoundedCornerShape(99.dp))
+                                    .clip(RoundedCornerShape(4.dp))
                                     .background(config.accent.color)
-                                    .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(99.dp))
+                                    .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
                             )
                         }
                     }
@@ -183,6 +184,14 @@ fun CustomizeScreen(
                             checked = isServiceRunning,
                             onCheckedChange = onToggleService,
                             testTag = "customize_sidebar_toggle"
+                        )
+
+                        TogglePreferenceRow(
+                            title = "Floating App Bubbles",
+                            subtitle = "Show compact edge orb to reopen active apps (long-press to resize)",
+                            checked = config.showFloatingBubbles,
+                            onCheckedChange = onSetShowFloatingBubbles,
+                            testTag = "customize_bubbles_toggle"
                         )
 
                         TogglePreferenceRow(
@@ -297,7 +306,7 @@ fun CustomizeScreen(
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(40.dp)
+                                                .size(36.dp)
                                                 .clip(CircleShape)
                                                 .background(swatch.color)
                                                 .border(
@@ -314,7 +323,7 @@ fun CustomizeScreen(
                                                     contentDescription = "Selected ${swatch.label}",
                                                     tint = if (swatch == SidebarAccent.ICE_WHITE) Color(0xFF0F172A)
                                                     else Color.White,
-                                                    modifier = Modifier.size(18.dp)
+                                                    modifier = Modifier.size(16.dp)
                                                 )
                                             }
                                         }

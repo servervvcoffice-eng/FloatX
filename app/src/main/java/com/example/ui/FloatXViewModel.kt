@@ -268,6 +268,7 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
     fun applyWindowPreset(windowId: String, preset: WindowSizePreset) = FloatXWindowRegistry.applyPreset(windowId, preset)
     fun setWindowOpacity(windowId: String, opacity: Float) = FloatXWindowRegistry.setWindowOpacity(windowId, opacity)
     fun setWindowMinimized(windowId: String, minimized: Boolean) = FloatXWindowRegistry.setMinimized(windowId, minimized)
+    fun setBoundsEditorVisible(windowId: String, visible: Boolean) = FloatXWindowRegistry.setBoundsEditorVisible(windowId, visible)
     fun closeWindow(windowId: String) = FloatXWindowRegistry.closeWindow(windowId)
     fun cascadeAllWindows() = FloatXWindowRegistry.cascadeAll()
     fun minimizeAllWindows() = FloatXWindowRegistry.minimizeAll()
@@ -303,6 +304,10 @@ class FloatXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setBlurEffect(blurEffect: Boolean) {
         viewModelScope.launch { prefsRepo.setBlurEffect(blurEffect) }
+    }
+
+    fun setShowFloatingBubbles(show: Boolean) {
+        viewModelScope.launch { prefsRepo.setShowFloatingBubbles(show) }
     }
 
     fun setAccent(accent: SidebarAccent) {

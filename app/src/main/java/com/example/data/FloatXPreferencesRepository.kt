@@ -30,6 +30,7 @@ class FloatXPreferencesRepository(context: Context) {
         val OPACITY = floatPreferencesKey("opacity")
         val AUTO_HIDE = booleanPreferencesKey("auto_hide")
         val BLUR_EFFECT = booleanPreferencesKey("blur_effect")
+        val SHOW_FLOATING_BUBBLES = booleanPreferencesKey("show_floating_bubbles")
         val ACCENT = stringPreferencesKey("accent")
         val DEFAULT_PRESET = stringPreferencesKey("default_preset")
         val THEME_MODE = stringPreferencesKey("theme_mode")
@@ -44,11 +45,12 @@ class FloatXPreferencesRepository(context: Context) {
             verticalBias = (prefs[Keys.VERTICAL_BIAS] ?: 0.45f).coerceIn(0.15f, 0.85f),
             handleHeightDp = (prefs[Keys.HANDLE_HEIGHT_DP] ?: 86).coerceIn(48, 140),
             handleWidthDp = (prefs[Keys.HANDLE_WIDTH_DP] ?: 6).coerceIn(4, 10),
-            opacity = (prefs[Keys.OPACITY] ?: 0.88f).coerceIn(0.35f, 1f),
+            opacity = (prefs[Keys.OPACITY] ?: 0.92f).coerceIn(0.35f, 1f),
             autoHide = prefs[Keys.AUTO_HIDE] ?: true,
             blurEffect = prefs[Keys.BLUR_EFFECT] ?: true,
+            showFloatingBubbles = prefs[Keys.SHOW_FLOATING_BUBBLES] ?: true,
             accent = prefs[Keys.ACCENT]?.let { runCatching { SidebarAccent.valueOf(it) }.getOrNull() }
-                ?: SidebarAccent.COBALT,
+                ?: SidebarAccent.GRAY,
             defaultPreset = prefs[Keys.DEFAULT_PRESET]?.let { runCatching { WindowSizePreset.valueOf(it) }.getOrNull() }
                 ?: WindowSizePreset.BALANCED,
             themeMode = prefs[Keys.THEME_MODE]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
@@ -87,6 +89,10 @@ class FloatXPreferencesRepository(context: Context) {
 
     suspend fun setBlurEffect(blurEffect: Boolean) {
         dataStore.edit { it[Keys.BLUR_EFFECT] = blurEffect }
+    }
+
+    suspend fun setShowFloatingBubbles(show: Boolean) {
+        dataStore.edit { it[Keys.SHOW_FLOATING_BUBBLES] = show }
     }
 
     suspend fun setAccent(accent: SidebarAccent) {

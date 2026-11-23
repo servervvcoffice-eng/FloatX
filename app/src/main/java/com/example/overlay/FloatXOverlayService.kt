@@ -77,13 +77,18 @@ class FloatXOverlayService : Service() {
     private var installedApps: List<InstalledAppInfo> = emptyList()
 
     private var edgeHandleView: View? = null
-    private var edgeHandleParams: WindowManager.LayoutParams? = null
+    private var sidebarScrimView: View? = null
     private var sidebarPanelView: View? = null
+
+    private enum class OverlayMode {
+        BUBBLE,
+        BOUNDS_EDITOR
+    }
 
     private data class AttachedWindowHolder(
         val view: View,
         val params: WindowManager.LayoutParams,
-        val isMinimized: Boolean,
+        val mode: OverlayMode,
         val zOrder: Long
     )
 
@@ -147,6 +152,8 @@ class FloatXOverlayService : Service() {
     override fun onDestroy() {
         removeViewSafe(edgeHandleView)
         edgeHandleView = null
+        removeViewSafe(sidebarScrimView)
+        sidebarScrimView = null
         removeViewSafe(sidebarPanelView)
         sidebarPanelView = null
         attachedWindows.values.forEach { removeViewSafe(it.view) }
@@ -220,7 +227,7 @@ class FloatXOverlayService : Service() {
         val contentText = if (openCount == 0) {
             "Edge sidebar active · Low-RAM mode"
         } else {
-            "$openCount floating window${if (openCount > 1) "s" else ""} active"
+            "$openCount floating app${if (openCount > 1) "s" else ""} ready"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -252,6 +259,7 @@ class FloatXOverlayService : Service() {
                     return@collectLatest
                 }
                 attachOrUpdateEdgeHandle()
+                syncWindowOverlays(FloatXWindowRegistry.windows.value)
                 if (FloatXWindowRegistry.sidebarExpanded.value) {
                     showSidebarPanel()
                 }
@@ -333,7 +341,6 @@ class FloatXOverlayService : Service() {
             }
         )
 
-        edgeHandleParams = params
         edgeHandleView = handleView
         addViewSafe(handleView, params)
     }
@@ -341,9 +348,26 @@ class FloatXOverlayService : Service() {
     private fun showSidebarPanel() {
         removeViewSafe(sidebarPanelView)
         sidebarPanelView = null
+        removeViewSafe(sidebarScrimView)
+        sidebarScrimView = null
+
+        // Attach transparent full-screen backdrop first so tapping anywhere outside auto-collapses the sidebar
+        val scrimParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        val scrim = viewFactory.createBackdropScrimView {
+            FloatXWindowRegistry.setSidebarExpanded(false)
+        }
+        sidebarScrimView = scrim
+        addViewSafe(scrim, scrimParams)
 
         val screenH = resources.displayMetrics.heightPixels
-        val panelWidth = dpToPx(80f)
+        val panelWidth = dpToPx(82f)
         val yPos = (screenH * currentConfig.verticalBias - dpToPx(170f)).roundToInt()
             .coerceIn(dpToPx(44f), (screenH - dpToPx(420f)).coerceAtLeast(dpToPx(44f)))
 
@@ -356,7 +380,7 @@ class FloatXOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = (if (currentConfig.edge == SidebarEdge.LEFT) Gravity.START else Gravity.END) or Gravity.TOP
-            x = dpToPx(12f)
+            x = dpToPx(10f)
             y = yPos
         }
 
@@ -372,7 +396,7 @@ class FloatXOverlayService : Service() {
                     accentArgb = currentConfig.accent.argb,
                     freeformLaunched = false
                 )
-                val result = FreeformWindowLauncher.launchInFreeformWindow(
+                FreeformWindowLauncher.launchInFreeformWindow(
                     context = this,
                     packageName = app.packageName,
                     xDp = session.xDp,
@@ -380,18 +404,18 @@ class FloatXOverlayService : Service() {
                     widthDp = session.widthDp,
                     heightDp = session.heightDp
                 )
-                when (result) {
-                    is FreeformLaunchResult.FreeformSuccess ->
-                        FloatXWindowRegistry.postStatus("Launched ${app.label} in Freeform")
-                    is FreeformLaunchResult.StandardFallback ->
-                        FloatXWindowRegistry.postStatus("Opened ${app.label} (Freeform fallback)")
-                    is FreeformLaunchResult.Failed ->
-                        FloatXWindowRegistry.postStatus(result.reason)
-                }
             },
             onWindowClick = { win ->
                 FloatXWindowRegistry.setSidebarExpanded(false)
                 FloatXWindowRegistry.focusWindow(win.id)
+                FreeformWindowLauncher.launchInFreeformWindow(
+                    context = this,
+                    packageName = win.packageName,
+                    xDp = win.xDp,
+                    yDp = win.yDp,
+                    widthDp = win.widthDp,
+                    heightDp = win.heightDp
+                )
             },
             onOpenStudio = {
                 FloatXWindowRegistry.setSidebarExpanded(false)
@@ -407,29 +431,38 @@ class FloatXOverlayService : Service() {
         )
 
         panel.alpha = 0f
-        panel.scaleX = 0.88f
-        panel.scaleY = 0.92f
+        panel.scaleX = 0.9f
+        panel.scaleY = 0.94f
         sidebarPanelView = panel
         addViewSafe(panel, params)
-        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180).start()
+        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170).start()
     }
 
     private fun hideSidebarPanel() {
+        removeViewSafe(sidebarScrimView)
+        sidebarScrimView = null
+
         val current = sidebarPanelView ?: return
         sidebarPanelView = null
         current.animate()
             .alpha(0f)
             .scaleX(0.9f)
-            .scaleY(0.92f)
-            .setDuration(130)
+            .scaleY(0.94f)
+            .setDuration(120)
             .withEndAction { removeViewSafe(current) }
             .start()
     }
 
     private fun syncWindowOverlays(sessions: List<FloatingWindowSession>) {
-        val activeIds = sessions.map { it.id }.toSet()
+        // Only render overlays when:
+        // 1) User explicitly opened the Bounds Resizer Editor (showBoundsEditor == true), OR
+        // 2) Floating Bubbles are enabled (or window is minimized), showing a compact 48dp edge orb.
+        // Never spawn giant blocking placeholder cards on top of real Freeform apps!
+        val visibleSessions = sessions.filter { session ->
+            session.showBoundsEditor || session.isMinimized || currentConfig.showFloatingBubbles
+        }
+        val activeIds = visibleSessions.map { it.id }.toSet()
 
-        // Remove closed windows
         val toRemove = attachedWindows.keys.filter { it !in activeIds }
         for (id in toRemove) {
             attachedWindows.remove(id)?.let { holder ->
@@ -437,58 +470,50 @@ class FloatXOverlayService : Service() {
             }
         }
 
-        val sortedSessions = sessions.sortedBy { it.zOrder }
+        val sortedSessions = visibleSessions.sortedBy { it.zOrder }
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
 
-        for (session in sortedSessions) {
+        sortedSessions.forEachIndexed { index, session ->
+            val targetMode = if (session.showBoundsEditor) {
+                OverlayMode.BOUNDS_EDITOR
+            } else {
+                OverlayMode.BUBBLE
+            }
+
             val existing = attachedWindows[session.id]
-            val needsRebuild = existing == null || existing.isMinimized != session.isMinimized
+            val needsRebuild = existing == null || existing.mode != targetMode
 
             if (needsRebuild) {
                 existing?.let { removeViewSafe(it.view) }
-                val holder = attachWindowSession(session, screenW, screenH)
+                val holder = attachWindowSession(session, targetMode, index, screenW, screenH)
                 if (holder != null) {
                     attachedWindows[session.id] = holder
                 }
-            } else if (existing != null) {
-                // Update coordinates, size, and opacity smoothly without recreating view
+            } else {
                 val params = existing.params
-                val targetX = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(56f)).coerceAtLeast(0))
-                val targetY = dpToPx(session.yDp).coerceIn(dpToPx(24f), (screenH - dpToPx(72f)).coerceAtLeast(dpToPx(24f)))
+                if (targetMode == OverlayMode.BOUNDS_EDITOR) {
+                    val targetX = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(120f)).coerceAtLeast(0))
+                    val targetY = dpToPx(session.yDp).coerceIn(dpToPx(24f), (screenH - dpToPx(120f)).coerceAtLeast(dpToPx(24f)))
+                    val targetW = dpToPx(session.widthDp).coerceIn(dpToPx(236f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(236f)))
+                    val targetH = dpToPx(session.heightDp).coerceIn(dpToPx(230f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(230f)))
 
-                var changed = false
-                if (params.x != targetX) {
-                    params.x = targetX
-                    changed = true
-                }
-                if (params.y != targetY) {
-                    params.y = targetY
-                    changed = true
-                }
-                if (!session.isMinimized) {
-                    val targetW = dpToPx(session.widthDp).coerceIn(dpToPx(210f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(210f)))
-                    val targetH = dpToPx(session.heightDp).coerceIn(dpToPx(210f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(210f)))
-                    if (params.width != targetW) {
-                        params.width = targetW
-                        changed = true
-                    }
-                    if (params.height != targetH) {
-                        params.height = targetH
-                        changed = true
-                    }
+                    var changed = false
+                    if (params.x != targetX) { params.x = targetX; changed = true }
+                    if (params.y != targetY) { params.y = targetY; changed = true }
+                    if (params.width != targetW) { params.width = targetW; changed = true }
+                    if (params.height != targetH) { params.height = targetH; changed = true }
+
                     existing.view.findViewWithTag<TextView>("dimensions_label")?.text =
-                        "${session.widthDp.roundToInt()} × ${session.heightDp.roundToInt()} dp · Freeform Ready"
-                }
-                existing.view.alpha = session.opacity
+                        "${session.widthDp.roundToInt()} × ${session.heightDp.roundToInt()} dp · Drag corner to resize"
 
-                if (existing.zOrder != session.zOrder) {
-                    // Re-attach at top of WindowManager z-order
-                    removeViewSafe(existing.view)
-                    addViewSafe(existing.view, params)
-                    attachedWindows[session.id] = existing.copy(zOrder = session.zOrder)
-                } else if (changed) {
-                    updateViewLayoutSafe(existing.view, params)
+                    if (existing.zOrder != session.zOrder) {
+                        removeViewSafe(existing.view)
+                        addViewSafe(existing.view, params)
+                        attachedWindows[session.id] = existing.copy(zOrder = session.zOrder)
+                    } else if (changed) {
+                        updateViewLayoutSafe(existing.view, params)
+                    }
                 }
             }
         }
@@ -496,14 +521,19 @@ class FloatXOverlayService : Service() {
 
     private fun attachWindowSession(
         session: FloatingWindowSession,
+        mode: OverlayMode,
+        bubbleIndex: Int,
         screenW: Int,
         screenH: Int
     ): AttachedWindowHolder? {
-        val xPx = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(64f)).coerceAtLeast(0))
-        val yPx = dpToPx(session.yDp).coerceIn(dpToPx(24f), (screenH - dpToPx(80f)).coerceAtLeast(dpToPx(24f)))
+        return if (mode == OverlayMode.BUBBLE) {
+            val bubbleSize = dpToPx(48f)
+            // Dock bubbles cleanly on the opposite edge from the sidebar handle so they never overlap
+            val dockOnLeft = currentConfig.edge == SidebarEdge.RIGHT
+            val defaultX = if (dockOnLeft) dpToPx(8f) else (screenW - bubbleSize - dpToPx(8f)).coerceAtLeast(0)
+            val defaultY = (dpToPx(110f) + bubbleIndex * dpToPx(58f))
+                .coerceIn(dpToPx(48f), (screenH - bubbleSize - dpToPx(80f)).coerceAtLeast(dpToPx(48f)))
 
-        return if (session.isMinimized) {
-            val bubbleSize = dpToPx(56f)
             val params = WindowManager.LayoutParams(
                 bubbleSize,
                 bubbleSize,
@@ -513,24 +543,36 @@ class FloatXOverlayService : Service() {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = xPx
-                y = yPx
+                x = defaultX
+                y = defaultY
             }
 
-            val view = viewFactory.createMinimizedBubbleView(
+            val view = viewFactory.createFloatingBubbleView(
                 session = session,
                 config = currentConfig,
-                onTapRestore = { FloatXWindowRegistry.setMinimized(session.id, false) },
+                onTapLaunchFreeform = {
+                    FloatXWindowRegistry.setMinimized(session.id, false)
+                    FreeformWindowLauncher.launchInFreeformWindow(
+                        context = this,
+                        packageName = session.packageName,
+                        xDp = session.xDp,
+                        yDp = session.yDp,
+                        widthDp = session.widthDp,
+                        heightDp = session.heightDp
+                    )
+                },
+                onLongPressResize = {
+                    FloatXWindowRegistry.setBoundsEditorVisible(session.id, true)
+                },
                 onDragDelta = { dx, dy ->
                     params.x = (params.x + dx).coerceIn(0, (screenW - bubbleSize).coerceAtLeast(0))
-                    params.y = (params.y + dy).coerceIn(dpToPx(28f), (screenH - bubbleSize - dpToPx(24f)).coerceAtLeast(dpToPx(28f)))
+                    params.y = (params.y + dy).coerceIn(dpToPx(32f), (screenH - bubbleSize - dpToPx(24f)).coerceAtLeast(dpToPx(32f)))
                     updateViewLayoutSafe(attachedWindows[session.id]?.view, params)
                 },
                 onDragEnd = {
                     val snapLeft = params.x < (screenW / 2)
-                    params.x = if (snapLeft) dpToPx(10f) else (screenW - bubbleSize - dpToPx(10f)).coerceAtLeast(0)
+                    params.x = if (snapLeft) dpToPx(8f) else (screenW - bubbleSize - dpToPx(8f)).coerceAtLeast(0)
                     updateViewLayoutSafe(attachedWindows[session.id]?.view, params)
-                    FloatXWindowRegistry.moveWindow(session.id, pxToDp(params.x), pxToDp(params.y))
                 }
             )
 
@@ -538,11 +580,13 @@ class FloatXOverlayService : Service() {
             view.scaleY = 0.7f
             view.alpha = 0f
             addViewSafe(view, params)
-            view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180).start()
-            AttachedWindowHolder(view, params, isMinimized = true, zOrder = session.zOrder)
+            view.animate().scaleX(1f).scaleY(1f).alpha(0.95f).setDuration(160).start()
+            AttachedWindowHolder(view, params, OverlayMode.BUBBLE, session.zOrder)
         } else {
-            val widthPx = dpToPx(session.widthDp).coerceIn(dpToPx(210f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(210f)))
-            val heightPx = dpToPx(session.heightDp).coerceIn(dpToPx(210f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(210f)))
+            val xPx = dpToPx(session.xDp).coerceIn(0, (screenW - dpToPx(120f)).coerceAtLeast(0))
+            val yPx = dpToPx(session.yDp).coerceIn(dpToPx(28f), (screenH - dpToPx(140f)).coerceAtLeast(dpToPx(28f)))
+            val widthPx = dpToPx(session.widthDp).coerceIn(dpToPx(236f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(236f)))
+            val heightPx = dpToPx(session.heightDp).coerceIn(dpToPx(230f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(230f)))
 
             val params = WindowManager.LayoutParams(
                 widthPx,
@@ -557,7 +601,7 @@ class FloatXOverlayService : Service() {
                 y = yPx
             }
 
-            val view = viewFactory.createFloatingWindowView(
+            val view = viewFactory.createBoundsResizerView(
                 session = session,
                 config = currentConfig,
                 onFocus = { FloatXWindowRegistry.focusWindow(session.id) },
@@ -568,16 +612,22 @@ class FloatXOverlayService : Service() {
                     FloatXWindowRegistry.moveWindow(session.id, pxToDp(params.x), pxToDp(params.y))
                 },
                 onResizeDelta = { dw, dh ->
-                    val newW = (params.width + dw).coerceIn(dpToPx(210f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(210f)))
-                    val newH = (params.height + dh).coerceIn(dpToPx(210f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(210f)))
+                    val newW = (params.width + dw).coerceIn(dpToPx(236f), (screenW - dpToPx(16f)).coerceAtLeast(dpToPx(236f)))
+                    val newH = (params.height + dh).coerceIn(dpToPx(230f), (screenH - dpToPx(64f)).coerceAtLeast(dpToPx(230f)))
                     params.width = newW
                     params.height = newH
                     updateViewLayoutSafe(attachedWindows[session.id]?.view, params)
                     FloatXWindowRegistry.resizeWindow(session.id, pxToDp(newW), pxToDp(newH))
                 },
-                onMinimize = { FloatXWindowRegistry.setMinimized(session.id, true) },
-                onClose = { FloatXWindowRegistry.closeWindow(session.id) },
-                onLaunchFreeform = {
+                onDismissEditor = {
+                    FloatXWindowRegistry.setBoundsEditorVisible(session.id, false)
+                },
+                onCloseSession = {
+                    FloatXWindowRegistry.closeWindow(session.id)
+                },
+                onApplyAndLaunchFreeform = {
+                    // Auto-hide the bounds editor frame so the real app opens unobstructed!
+                    FloatXWindowRegistry.setBoundsEditorVisible(session.id, false)
                     FreeformWindowLauncher.launchInFreeformWindow(
                         context = this,
                         packageName = session.packageName,
@@ -596,8 +646,8 @@ class FloatXOverlayService : Service() {
             view.scaleY = 0.92f
             view.alpha = 0f
             addViewSafe(view, params)
-            view.animate().scaleX(1f).scaleY(1f).alpha(session.opacity).setDuration(190).start()
-            AttachedWindowHolder(view, params, isMinimized = false, zOrder = session.zOrder)
+            view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180).start()
+            AttachedWindowHolder(view, params, OverlayMode.BOUNDS_EDITOR, session.zOrder)
         }
     }
 
