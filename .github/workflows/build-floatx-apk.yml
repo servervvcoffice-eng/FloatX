@@ -19,40 +19,59 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Android SDK & accept licenses
-        uses: android-actions/setup-android@v3
-
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.3.1"
-
-      - name: Prepare debug & ephemeral test release keystores
+        shell: bash
         run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
+          if [ -n "$SDKMANAGER" ]; then
+            set +o pipefail
+            yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+            "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+          fi
+
+      - name: Install Gradle 9.3.1
+        shell: bash
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-9.3.1/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare debug & test release keystores
+        shell: bash
+        run: |
+          rm -f debug.keystore my-upload-key.jks
           if [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-          else
-            keytool -genkeypair -v -keystore debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
+            tr -d '\r\n ' < debug.keystore.base64 | base64 -d > debug.keystore 2>/dev/null || rm -f debug.keystore
+          fi
+          if [ ! -s debug.keystore ]; then
+            keytool -genkeypair -noprompt \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # Ephemeral runner-only test signing keystore for ARM64 Release APK
-          keytool -genkeypair -v -keystore my-upload-key.jks \
-            -storepass "floatx-ci-test-pass" -alias upload -keypass "floatx-ci-test-pass" \
+          # Ephemeral CI-only test signing keystore for ARM64 Release APK
+          keytool -genkeypair -noprompt \
+            -keystore my-upload-key.jks \
+            -storepass "floatx-ci-test-pass" \
+            -alias upload \
+            -keypass "floatx-ci-test-pass" \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=FloatX Test,O=FloatX,C=US"
 
       - name: Build Debug & ARM64 Release APKs
+        shell: bash
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: floatx-ci-test-pass
           KEY_PASSWORD: floatx-ci-test-pass
-        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
+        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
 
       - name: Upload ARM64 Release APK
         uses: actions/upload-artifact@v4
